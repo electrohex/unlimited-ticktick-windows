@@ -3,10 +3,14 @@ name: Build and Release Patched TickTick
 on:
   workflow_dispatch:
     inputs:
-      app_url:
-        description: "Direct URL to your original TickTick.exe file"
+      release_tag:
+        description: 'Release tag that contains the EXE (e.g., v1.0.0)'
         required: true
-        type: string
+        default: 'v1.0.0'
+      asset_name:
+        description: 'Name of the exe asset (e.g., TickTick.exe)'
+        required: true
+        default: 'TickTick.exe'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -31,29 +35,41 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Download TickTick Setup
+      - name: Download TickTick EXE from Release Asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.release_tag }}
+          ASSET: ${{ github.event.inputs.asset_name }}
         shell: pwsh
         run: |
-          Write-Host "Downloading target file from ${{ inputs.app_url }}..."
-          Invoke-WebRequest -Uri "${{ inputs.app_url }}" -OutFile "TickTick.exe"
-
-      - name: Validate Downloaded File
-        shell: pwsh
-        run: |
-          $file = Get-Item "TickTick.exe"
-          Write-Host "Downloaded file size: $($file.Length) bytes"
-          
-          # Check for valid PE header (DOS signature: MZ)
-          $bytes = [System.IO.File]::ReadAllBytes("TickTick.exe")
+          Write-Host "Repo: $env:REPO Tag: $env:TAG Asset: $env:ASSET"
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/releases/tags/$env:TAG" -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; Accept = "application/vnd.github.v3+json" }
+          if (-not $release) { throw "Release $env:TAG not found" }
+          $asset = $release.assets | Where-Object { $_.name -eq $env:ASSET }
+          if (-not $asset) { throw "Asset $env:ASSET not found on release $env:TAG" }
+          $out = Join-Path $PWD $env:ASSET
+          Write-Host "Downloading $($asset.browser_download_url) to $out"
+          Invoke-RestMethod -Uri $asset.url -Headers @{ Authorization = "token $env:GITHUB_TOKEN"; Accept = "application/octet-stream" } -OutFile $out
+          $bytes = [System.IO.File]::ReadAllBytes($out)
+          Write-Host "Downloaded file size: $($bytes.Length)"
           if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            Write-Error "Invalid executable: DOS signature not found. File may be corrupted or HTML error page."
-            exit 1
+            Write-Host "First 200 chars of the file (as text) for debug:"
+            try { Get-Content $out -Raw -Encoding UTF8 | Select-Object -First 1 | Write-Host } catch { Write-Host "(unable to display textual preview)" }
+            throw "Invalid executable: DOS signature (MZ) not found."
           }
           Write-Host "✅ File validation passed - valid PE executable"
-          
+
       - name: Run Patcher
-        # We can just build and run directly via dotnet run
-        run: dotnet run -- "TickTick.exe"
+        shell: pwsh
+        run: |
+          $in = Join-Path $PWD '${{ github.event.inputs.asset_name }}'
+          Write-Host "Input exe: $in"
+          # Ensure the project is built (if your patcher is a dotnet project in the repo)
+          dotnet build -c Release
+          # Run the patcher - adjust the command below to match your patcher implementation
+          # If your patcher is `dotnet run -- <input>`, ensure the project takes args and produces TickTick_Patched.exe
+          dotnet run --project ./ -c Release -- $in
 
       - name: Prepare Release Package
         shell: pwsh
@@ -62,16 +78,16 @@ jobs:
             Write-Error "Patching failed: TickTick_Patched.exe not generated."
             exit 1
           }
-          Compress-Archive -Path "TickTick_Patched.exe" -DestinationPath "TickTick_Patched.zip"
+          Compress-Archive -Path "TickTick_Patched.exe" -DestinationPath "TickTick_Patched.zip" -Force
+          Write-Host "Created TickTick_Patched.zip (size $((Get-Item 'TickTick_Patched.zip').Length) bytes)"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: Patched TickTick (${{ github.run_number }})
-          files: TickTick_Patched.zip
-          draft: true
+          name: patched-ticktick
+          path: TickTick_Patched.zip
 
-      - name: Output Release URL
+      - name: Output Artifact Notice
         shell: pwsh
         run: |
-          Write-Host "::notice::Release available at: https://github.com/${{ github.repository }}/releases"
+          Write-Host "::notice::Patched ZIP uploaded as artifact 'patched-ticktick' — download from the workflow run's Artifacts section."
