@@ -68,7 +68,7 @@ namespace TTPatcher
         return false;
     }
 }
-        }
+        
 
         private bool PatchUserModel(ModuleDef module)
         {
