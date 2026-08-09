@@ -7,37 +7,67 @@ namespace TTPatcher
     public class DnlibAssemblyPatcher : IAssemblyPatcher
     {
         public bool PatchAssembly(string inputPath, string outputPath)
+{
+    try
+    {
+        // Validate file exists
+        if (!File.Exists(inputPath))
         {
-            try
+            Console.WriteLine($"❌ Error: Input file not found: {inputPath}");
+            return false;
+        }
+        
+        var fileInfo = new FileInfo(inputPath);
+        Console.WriteLine($"Loading assembly with dnlib... (File size: {fileInfo.Length} bytes)");
+        
+        // Validate it's a valid PE file before attempting to load
+        if (fileInfo.Length < 2)
+        {
+            Console.WriteLine($"❌ Error: File too small to be a valid executable ({fileInfo.Length} bytes)");
+            return false;
+        }
+        
+        // Check DOS signature (MZ header)
+        using (var fs = new FileStream(inputPath, FileMode.Open, FileAccess.Read))
+        {
+            byte[] header = new byte[2];
+            fs.Read(header, 0, 2);
+            
+            if (header[0] != 0x4D || header[1] != 0x5A) // MZ
             {
-                Console.WriteLine("Loading assembly with dnlib...");
-                
-                // Load the assembly
-                var module = ModuleDefMD.Load(inputPath);
-                Console.WriteLine($"Module loaded: {module.Name}");
-
-                // Find and patch the UserModel
-                var patchSuccess = PatchUserModel(module);
-                
-                if (!patchSuccess)
-                {
-                    Console.WriteLine("Failed to patch UserModel properties.");
-                    return false;
-                }
-
-                // Save the patched assembly
-                Console.WriteLine($"Saving patched assembly to: {outputPath}");
-                module.Write(outputPath);
-                Console.WriteLine("Assembly saved successfully!");
-                
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error during patching: {ex.Message}");
-                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                Console.WriteLine("❌ Error: Invalid DOS signature. File is not a valid PE executable.");
+                Console.WriteLine("   This may indicate the file is corrupted, not an executable, or an HTML error page.");
                 return false;
             }
+        }
+        
+        Console.WriteLine("✅ File validation passed - loading with dnlib...");
+        var module = ModuleDefMD.Load(inputPath);
+        Console.WriteLine($"Module loaded: {module.Name}");
+
+        // Find and patch the UserModel
+        var patchSuccess = PatchUserModel(module);
+        
+        if (!patchSuccess)
+        {
+            Console.WriteLine("Failed to patch UserModel properties.");
+            return false;
+        }
+
+        // Save the patched assembly
+        Console.WriteLine($"Saving patched assembly to: {outputPath}");
+        module.Write(outputPath);
+        Console.WriteLine("Assembly saved successfully!");
+        
+        return true;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Error during patching: {ex.Message}");
+        Console.WriteLine($"Stack trace: {ex.StackTrace}");
+        return false;
+    }
+}
         }
 
         private bool PatchUserModel(ModuleDef module)
