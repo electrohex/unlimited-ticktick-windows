@@ -37,6 +37,20 @@ jobs:
           Write-Host "Downloading target file from ${{ inputs.app_url }}..."
           Invoke-WebRequest -Uri "${{ inputs.app_url }}" -OutFile "TickTick.exe"
 
+      - name: Validate Downloaded File
+        shell: pwsh
+        run: |
+          $file = Get-Item "TickTick.exe"
+          Write-Host "Downloaded file size: $($file.Length) bytes"
+          
+          # Check for valid PE header (DOS signature: MZ)
+          $bytes = [System.IO.File]::ReadAllBytes("TickTick.exe")
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            Write-Error "Invalid executable: DOS signature not found. File may be corrupted or HTML error page."
+            exit 1
+          }
+          Write-Host "✅ File validation passed - valid PE executable"
+          
       - name: Run Patcher
         # We can just build and run directly via dotnet run
         run: dotnet run -- "TickTick.exe"
